@@ -1,7 +1,11 @@
 #include <gfx_window.h>
 #include <gfx_imgui.h>
+#include <gfx_scene.h>
 #include <chrono>
-#include "Timer.h"
+#include "timer.h"
+#include "camera.h"
+
+#include <glm/glm.hpp>
 
 int main()
 {
@@ -34,6 +38,8 @@ int main()
 
 	GfxSamplerState textureSampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
+	Camera camera = CreateCamera(gfx, glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+
 	Timer deltaTimer;
 	for (float time = 0.0f; !gfxWindowIsCloseRequested(window); time += 0.1f)
 	{
@@ -41,6 +47,8 @@ int main()
 		deltaTimer.Record();
 
 		gfxWindowPumpEvents(window);
+
+		UpdateCamera(gfx, window, camera, deltaTime);
 
 		// Clear our render targets
 		gfxCommandClearTexture(gfx, color_buffer);
@@ -56,6 +64,8 @@ int main()
 						  0.5f * sinf(time) + 0.5f,
 						  1.0f };
 		gfxProgramSetParameter(gfx, program, "Color", color);
+		gfxProgramSetParameter(gfx, program, "view_proj", camera.view_proj);
+		gfxProgramSetParameter(gfx, program, "model", glm::mat4(1.0f));
 
 		gfxCommandBindKernel(gfx, kernel);
 		gfxCommandBindVertexBuffer(gfx, vertex_buffer);
