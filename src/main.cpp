@@ -7,6 +7,16 @@
 
 #include <glm/glm.hpp>
 
+struct GPUMesh
+{
+	uint32_t index_count;
+
+	glm::mat4 transform = glm::mat4(1.0f);
+
+	GfxConstRef<GfxMaterial> material;
+	GfxBuffer vertex_buffer, index_buffer;
+};
+
 int main()
 {
 	auto window = gfxCreateWindow(1280, 720, "gfx - Hello, triangle!");
@@ -15,8 +25,28 @@ int main()
 #if _DEBUG
 	ctxFlags |= kGfxCreateContextFlag_EnableDebugLayer;
 #endif
-	auto gfx = gfxCreateContext(window, ctxFlags);
+	GfxContext gfx = gfxCreateContext(window, ctxFlags);
+	GfxScene scene = gfxCreateScene();
 	gfxImGuiInitialize(gfx);
+
+	gfxSceneImport(scene, "assets/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
+	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
+	const GfxInstance* instances  = gfxSceneGetInstances(scene);
+
+	// Send mesh data to the gpu
+	std::vector<GPUMesh> gpu_meshes(instancesCount);
+	for (uint32_t i = 0; i < instancesCount; ++i)
+	{
+		GfxInstance instance = instances[i];
+		const GfxConstRef<GfxMesh>& mesh = instance.mesh;
+		GPUMesh& gpu_mesh = gpu_meshes[i];
+
+		gpu_mesh.transform	   = instance.transform;
+		gpu_mesh.material      = mesh->material;
+		gpu_mesh.index_count   = static_cast<uint32_t>(mesh->indices.size());
+		gpu_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * mesh->vertices.size(), mesh->vertices.data());
+		gpu_mesh.index_buffer  = gfxCreateBuffer(gfx, sizeof(uint32_t) * mesh->indices.size(), mesh->indices.data());
+	}
 
 	float vertices[] = {  0.5f, -0.5f, 0.0f,
 						  0.0f,  0.7f, 0.0f,
@@ -30,8 +60,8 @@ int main()
 	gfxDrawStateSetColorTarget(pbr_draw_state, 0, color_buffer);
 	gfxDrawStateSetDepthStencilTarget(pbr_draw_state, depth_buffer);
 
-	auto program = gfxCreateProgram(gfx, "shaders/triangle");
-	auto kernel = gfxCreateGraphicsKernel(gfx, program, pbr_draw_state);
+	auto objectProgram = gfxCreateProgram(gfx, "shaders/object");
+	auto objectKernel = gfxCreateGraphicsKernel(gfx, objectProgram, pbr_draw_state);
 
 	GfxProgram compositeProgram = gfxCreateProgram(gfx, "shaders/scene_composite");
 	GfxKernel compositeKernel   = gfxCreateGraphicsKernel(gfx, compositeProgram);
@@ -60,18 +90,20 @@ int main()
 		}
 		ImGui::End();
 
-		float color[] = { 0.5f * cosf(time) + 0.5f,
-						  0.5f * sinf(time) + 0.5f,
-						  1.0f };
-		gfxProgramSetParameter(gfx, program, "Color", color);
-		gfxProgramSetParameter(gfx, program, "view_proj", camera.view_proj);
-		gfxProgramSetParameter(gfx, program, "model", glm::mat4(1.0f));
+		// Render objects
+		gfxProgramSetParameter(gfx, objectProgram, "view_proj", camera.view_proj);
 
-		gfxCommandBindKernel(gfx, kernel);
-		gfxCommandBindVertexBuffer(gfx, vertex_buffer);
+		gfxCommandBindKernel(gfx, objectKernel);
+		for (const GPUMesh& mesh : gpu_meshes)
+		{
+			gfxProgramSetParameter(gfx, objectProgram, "Color", mesh.material->albedo);
+			gfxProgramSetParameter(gfx, objectProgram, "model", mesh.transform);
+			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
+			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
+			gfxCommandDrawIndexed(gfx, mesh.index_count);
+		}
 
-		gfxCommandDraw(gfx, 3);
-
+		// render scene composite
 		gfxProgramSetParameter(gfx, compositeProgram, "g_SceneTexture", color_buffer);
 		gfxProgramSetParameter(gfx, compositeProgram, "TextureSampler", textureSampler);
 		gfxCommandBindKernel(gfx, compositeKernel);
