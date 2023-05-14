@@ -4,8 +4,11 @@
 #include <chrono>
 #include "timer.h"
 #include "camera.h"
+#include "gpu_shared.h"
 
 #include <glm/glm.hpp>
+
+#include <array>
 
 struct GPUMesh
 {
@@ -13,7 +16,7 @@ struct GPUMesh
 
 	glm::mat4 transform = glm::mat4(1.0f);
 
-	GfxConstRef<GfxMaterial> material;
+	GPUMaterial material;
 	GfxBuffer vertex_buffer, index_buffer;
 };
 
@@ -41,8 +44,10 @@ int main()
 		const GfxConstRef<GfxMesh>& mesh = instance.mesh;
 		GPUMesh& gpu_mesh = gpu_meshes[i];
 
+		gpu_mesh.material = {};
+		gpu_mesh.material.color = mesh->material->albedo;
+
 		gpu_mesh.transform	   = instance.transform;
-		gpu_mesh.material      = mesh->material;
 		gpu_mesh.index_count   = static_cast<uint32_t>(mesh->indices.size());
 		gpu_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * mesh->vertices.size(), mesh->vertices.data());
 		gpu_mesh.index_buffer  = gfxCreateBuffer(gfx, sizeof(uint32_t) * mesh->indices.size(), mesh->indices.data());
@@ -54,14 +59,16 @@ int main()
 	auto vertex_buffer = gfxCreateBuffer(gfx, sizeof(vertices), vertices);
 
 	GfxTexture color_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
+	GfxTexture normal_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
 	GfxTexture depth_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_D32_FLOAT);
 
-	GfxDrawState pbr_draw_state;
-	gfxDrawStateSetColorTarget(pbr_draw_state, 0, color_buffer);
-	gfxDrawStateSetDepthStencilTarget(pbr_draw_state, depth_buffer);
+	GfxDrawState deferredShadingDrawState;
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 0, color_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 1, normal_buffer);
+	gfxDrawStateSetDepthStencilTarget(deferredShadingDrawState, depth_buffer);
 
-	auto objectProgram = gfxCreateProgram(gfx, "shaders/object");
-	auto objectKernel = gfxCreateGraphicsKernel(gfx, objectProgram, pbr_draw_state);
+	auto deferredShadingProgram = gfxCreateProgram(gfx, "shaders/deferred_shading");
+	auto deferredShadingKernel = gfxCreateGraphicsKernel(gfx, deferredShadingProgram, deferredShadingDrawState);
 
 	GfxProgram compositeProgram = gfxCreateProgram(gfx, "shaders/scene_composite");
 	GfxKernel compositeKernel   = gfxCreateGraphicsKernel(gfx, compositeProgram);
@@ -69,6 +76,10 @@ int main()
 	GfxSamplerState textureSampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
 	Camera camera = CreateCamera(gfx, glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+
+	// Debug views
+	std::array<const char*, 2> debug_views = { "Color", "Normal" };
+	int selected_debug_view = 0;
 
 	Timer deltaTimer;
 	for (float time = 0.0f; !gfxWindowIsCloseRequested(window); time += 0.1f)
@@ -82,29 +93,55 @@ int main()
 
 		// Clear our render targets
 		gfxCommandClearTexture(gfx, color_buffer);
+		gfxCommandClearTexture(gfx, normal_buffer);
 		gfxCommandClearTexture(gfx, depth_buffer);
 
 		if (ImGui::Begin("Debug"))
 		{
 			ImGui::Text("CPU: %.2fms(%.0fFPS)", deltaTime, 1000.0f / deltaTime);
+
+			ImGui::Separator();
+			ImGui::Text("Debug Views");
+			const char* combo_preview_value = debug_views[selected_debug_view];
+			if (ImGui::BeginCombo("##debug_view", combo_preview_value))
+			{
+				for (int i = 0; i < debug_views.size(); i++)
+				{
+					const bool is_selected = (selected_debug_view == i);
+					if (ImGui::Selectable(debug_views[i], is_selected))
+						selected_debug_view = i;
+
+					// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+					if (is_selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+
 		}
 		ImGui::End();
 
 		// Render objects
-		gfxProgramSetParameter(gfx, objectProgram, "view_proj", camera.view_proj);
+		gfxProgramSetParameter(gfx, deferredShadingProgram, "view_proj", camera.view_proj);
 
-		gfxCommandBindKernel(gfx, objectKernel);
+		gfxCommandBindKernel(gfx, deferredShadingKernel);
 		for (const GPUMesh& mesh : gpu_meshes)
 		{
-			gfxProgramSetParameter(gfx, objectProgram, "Color", mesh.material->albedo);
-			gfxProgramSetParameter(gfx, objectProgram, "model", mesh.transform);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "g_Material", mesh.material);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", mesh.transform);
 			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
 			gfxCommandDrawIndexed(gfx, mesh.index_count);
 		}
 
 		// render scene composite
-		gfxProgramSetParameter(gfx, compositeProgram, "g_SceneTexture", color_buffer);
+		GfxTexture scene_texture;
+		if (selected_debug_view == 1)
+			scene_texture = normal_buffer;
+		else
+			scene_texture = color_buffer;
+
+		gfxProgramSetParameter(gfx, compositeProgram, "g_SceneTexture", scene_texture);
 		gfxProgramSetParameter(gfx, compositeProgram, "TextureSampler", textureSampler);
 		gfxCommandBindKernel(gfx, compositeKernel);
 		gfxCommandDraw(gfx, 6);

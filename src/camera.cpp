@@ -62,7 +62,7 @@ void UpdateCamera(GfxContext gfx, GfxWindow window, Camera& fly_camera, float de
 	glm::vec2 delta = (mousePos - fly_camera.last_mouse_pos) * 0.002f;
 	fly_camera.last_mouse_pos = mousePos;
 
-	if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+	if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
 	{
 		// Rotation
 		if (delta.x != 0.0f || delta.y != 0.0f)
