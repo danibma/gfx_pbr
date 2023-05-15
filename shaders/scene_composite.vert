@@ -7,13 +7,13 @@ struct VSResult
 static const float quadVertices[] =
 {
 	// positions  // texCoords
-    -1.0f,  1.0f,  1.0f,  0.0f,
-	-1.0f, -1.0f,  1.0f,  1.0f,
-	 1.0f, -1.0f,  0.0f,  1.0f,
+    -1.0f,  1.0f,  0.0f,  0.0f,
+	-1.0f, -1.0f,  0.0f,  1.0f,
+	 1.0f, -1.0f,  1.0f,  1.0f,
 
-	-1.0f,  1.0f,  1.0f,  0.0f,
-	 1.0f, -1.0f,  0.0f,  1.0f,
-	 1.0f,  1.0f,  0.0f,  0.0f
+	-1.0f,  1.0f,  0.0f,  0.0f,
+	 1.0f, -1.0f,  1.0f,  1.0f,
+	 1.0f,  1.0f,  1.0f,  0.0f
 };
 
 VSResult main(uint vertexID : SV_VertexID)
