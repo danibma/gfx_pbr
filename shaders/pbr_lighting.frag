@@ -19,7 +19,7 @@ float GeometrySchlickGGX(float NdotV, float roughness)
 	float r = roughness + 1.0f;
 	float k = (r * r) / 8.0f;
     
-	float num = NdotV;
+	float num   = NdotV;
 	float denom = NdotV * (1.0f - k) + k;
     
 	return num / denom;
@@ -68,7 +68,7 @@ float4 main(QuadResult quad) : SV_Target
 	float3 N = normalize(normal);
 	float3 V = normalize(camPos.rgb - worldPos); // view direction
     
-	float3 F0 = (float3) 0.04f;
+	float3 F0 = (float3)0.04f;
 	F0 = lerp(F0, albedo, metallic);
     
     // reflectance equation
@@ -89,14 +89,18 @@ float4 main(QuadResult quad) : SV_Target
 	float3 kS = F;
 	float3 kD = (float3) 1.0f - kS;
 	kD *= 1.0f - metallic;
+
+	// Lambertian diffuse
+    float3 diffuse = ((kD * albedo) / PI);
     
+	// Microfacet Specular BRDF
 	float3 numerator = NDF * G * F;
-	float denominator = 4.0f * max(dot(N, 0), 0.0f) * max(dot(N, L), 0.0) + 0.0001;
+	float denominator = 4.0f * max(dot(N, V), 0.0f) * max(dot(N, L), 0.0) + 0.0001;
 	float3 specular = numerator / denominator;
     
     // add to outgoing radiance Lo
 	float NdotL = max(dot(N, L), 0.0f);
-	Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    Lo += (diffuse + specular) * radiance * NdotL;
     
 	float3 ambient = (float3)0.03f * albedo;
 	float3 color = ambient * Lo;
