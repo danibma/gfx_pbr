@@ -47,10 +47,8 @@ void UpdateCamera(GfxContext gfx, GfxWindow window, Camera& fly_camera, float de
 	if (gfxWindowIsKeyDown(window, 0x53)) // S
 		fly_camera.eye -= fly_camera.center * cameraSpeed;
 	if (gfxWindowIsKeyDown(window, 0x41)) // A
-		fly_camera.eye += rightDirection * cameraSpeed;
-	if (gfxWindowIsKeyDown(window, 0x44)) // D
 		fly_camera.eye -= rightDirection * cameraSpeed;
-	if (gfxWindowIsKeyDown(window, 0x41)) // A
+	if (gfxWindowIsKeyDown(window, 0x44)) // D
 		fly_camera.eye += rightDirection * cameraSpeed;
 	if (gfxWindowIsKeyDown(window, VK_SHIFT)) // Shift
 		fly_camera.eye -= fly_camera.up * cameraSpeed;
@@ -69,7 +67,7 @@ void UpdateCamera(GfxContext gfx, GfxWindow window, Camera& fly_camera, float de
 		{
 			const float rotation_speed = 1.5f;
 			float pitchDelta = delta.y * rotation_speed;
-			float yawDelta = -delta.x * rotation_speed;
+			float yawDelta = delta.x * rotation_speed;
 
 			glm::quat q = glm::normalize(glm::cross(glm::angleAxis(-pitchDelta, rightDirection),
 													glm::angleAxis(-yawDelta, glm::vec3(0.f, 1.0f, 0.0f))));

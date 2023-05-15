@@ -8,7 +8,8 @@ file(GLOB SHADER_FILES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.geom
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsl)
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsli)
 
 file(GLOB_RECURSE HEADER_FILES
     CONFIGURE_DEPENDS

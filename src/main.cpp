@@ -6,7 +6,10 @@
 #include "camera.h"
 #include "gpu_shared.h"
 
+#include "imgui_demo.cpp"
+
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <array>
 
@@ -22,7 +25,7 @@ struct GPUMesh
 
 int main()
 {
-	auto window = gfxCreateWindow(1280, 720, "gfx - Hello, triangle!");
+	auto window = gfxCreateWindow(1280, 720, "gfx_pbr");
 
 	GfxCreateContextFlags ctxFlags = 0;
 #if _DEBUG
@@ -32,7 +35,8 @@ int main()
 	GfxScene scene = gfxCreateScene();
 	gfxImGuiInitialize(gfx);
 
-	gfxSceneImport(scene, "assets/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
+	//gfxSceneImport(scene, "assets/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
+	gfxSceneImport(scene, "assets/sphere/sphere.gltf");
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
@@ -45,7 +49,19 @@ int main()
 		GPUMesh& gpu_mesh = gpu_meshes[i];
 
 		gpu_mesh.material = {};
-		gpu_mesh.material.color = mesh->material->albedo;
+		if (mesh->material)
+		{
+			gpu_mesh.material.albedo    = mesh->material->albedo;
+			gpu_mesh.material.roughness = mesh->material->roughness;
+			gpu_mesh.material.metallic  = mesh->material->metallicity;
+		}
+		else
+		{
+			gpu_mesh.material.albedo    = float4(1.0f);
+			gpu_mesh.material.roughness = 1.0f;
+			gpu_mesh.material.metallic  = 0.0f;
+		}
+		
 
 		gpu_mesh.transform	   = instance.transform;
 		gpu_mesh.index_count   = static_cast<uint32_t>(mesh->indices.size());
@@ -58,17 +74,30 @@ int main()
 						 -0.5f, -0.5f, 0.0f };
 	auto vertex_buffer = gfxCreateBuffer(gfx, sizeof(vertices), vertices);
 
-	GfxTexture color_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
-	GfxTexture normal_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
-	GfxTexture depth_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_D32_FLOAT);
+	// Deferred shading buffers
+	GfxTexture world_pos_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); world_pos_buffer.setName("world_pos_buffer");
+	GfxTexture albedo_buffer	= gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); albedo_buffer.setName("albedo_buffer");
+	GfxTexture normal_buffer	= gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); normal_buffer.setName("normal_buffer");
+	GfxTexture metallic_buffer  = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); metallic_buffer.setName("metallic_buffer");
+	GfxTexture roughness_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); roughness_buffer.setName("roughness_buffer");
+	GfxTexture depth_buffer		= gfxCreateTexture2D(gfx, DXGI_FORMAT_D32_FLOAT);          
 
 	GfxDrawState deferredShadingDrawState;
-	gfxDrawStateSetColorTarget(deferredShadingDrawState, 0, color_buffer);
-	gfxDrawStateSetColorTarget(deferredShadingDrawState, 1, normal_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 0, world_pos_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 1, albedo_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 2, normal_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 3, metallic_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 4, roughness_buffer);
 	gfxDrawStateSetDepthStencilTarget(deferredShadingDrawState, depth_buffer);
 
-	auto deferredShadingProgram = gfxCreateProgram(gfx, "shaders/deferred_shading");
-	auto deferredShadingKernel = gfxCreateGraphicsKernel(gfx, deferredShadingProgram, deferredShadingDrawState);
+	GfxProgram deferredShadingProgram = gfxCreateProgram(gfx, "shaders/deferred_shading");
+	GfxKernel deferredShadingKernel = gfxCreateGraphicsKernel(gfx, deferredShadingProgram, deferredShadingDrawState);
+
+	GfxTexture pbr_color_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
+	GfxDrawState pbrDrawState;
+	gfxDrawStateSetColorTarget(pbrDrawState, 0, pbr_color_buffer);
+	GfxProgram PBRProgram = gfxCreateProgram(gfx, "shaders/pbr_lighting");
+	GfxKernel PBRKernel = gfxCreateGraphicsKernel(gfx, PBRProgram, pbrDrawState);
 
 	GfxProgram compositeProgram = gfxCreateProgram(gfx, "shaders/scene_composite");
 	GfxKernel compositeKernel   = gfxCreateGraphicsKernel(gfx, compositeProgram);
@@ -78,8 +107,11 @@ int main()
 	Camera camera = CreateCamera(gfx, glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
 
 	// Debug views
-	std::array<const char*, 2> debug_views = { "Color", "Normal" };
+	std::array<const char*, 3> debug_views = { "Full", "Color", "Normal" };
 	int selected_debug_view = 0;
+
+	glm::vec3 light_position(-1.0f, 1.0f, 2.0f);
+	glm::vec3 light_color(1.0f);
 
 	Timer deltaTimer;
 	for (float time = 0.0f; !gfxWindowIsCloseRequested(window); time += 0.1f)
@@ -90,11 +122,6 @@ int main()
 		gfxWindowPumpEvents(window);
 
 		UpdateCamera(gfx, window, camera, deltaTime);
-
-		// Clear our render targets
-		gfxCommandClearTexture(gfx, color_buffer);
-		gfxCommandClearTexture(gfx, normal_buffer);
-		gfxCommandClearTexture(gfx, depth_buffer);
 
 		if (ImGui::Begin("Debug"))
 		{
@@ -118,13 +145,35 @@ int main()
 				ImGui::EndCombo();
 			}
 
+			// Light
+			ImGui::Separator();
+			ImGui::Text("Light");
+			ImGui::DragFloat3("Position", glm::value_ptr(light_position));
+			ImGui::DragFloat3("Color", glm::value_ptr(light_color), 0.1f, 0.0f, 1.0f);
+
+			// Sphere Material
+			ImGui::Separator();
+			ImGui::Text("Sphere Material");
+			ImGui::ColorEdit4("Albedo", glm::value_ptr(gpu_meshes[0].material.albedo));
+			ImGui::DragFloat("Metallic", &gpu_meshes[0].material.metallic, 0.05f, 0.0f, 1.0f);
+			ImGui::DragFloat("Roughness", &gpu_meshes[0].material.roughness, 0.05f, 0.0f, 1.0f);
+			
+			//ImGui::ShowDemoWindow();
 		}
 		ImGui::End();
 
-		// Render objects
-		gfxProgramSetParameter(gfx, deferredShadingProgram, "view_proj", camera.view_proj);
+		// Render geometry
+		gfxCommandBeginEvent(gfx, "Geometry Pass");
+		// Clear deferred render targets
+		gfxCommandClearTexture(gfx, world_pos_buffer);
+		gfxCommandClearTexture(gfx, albedo_buffer);
+		gfxCommandClearTexture(gfx, normal_buffer);
+		gfxCommandClearTexture(gfx, metallic_buffer);
+		gfxCommandClearTexture(gfx, roughness_buffer);
+		gfxCommandClearTexture(gfx, depth_buffer);
 
 		gfxCommandBindKernel(gfx, deferredShadingKernel);
+		gfxProgramSetParameter(gfx, deferredShadingProgram, "view_proj", camera.view_proj);
 		for (const GPUMesh& mesh : gpu_meshes)
 		{
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "g_Material", mesh.material);
@@ -133,18 +182,46 @@ int main()
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
 			gfxCommandDrawIndexed(gfx, mesh.index_count);
 		}
+		gfxCommandEndEvent(gfx);
+
+		// PBR lighting
+		gfxCommandBeginEvent(gfx, "PBR Lighting Pass");
+		
+		// Clear PBR render targets
+		gfxCommandClearTexture(gfx, pbr_color_buffer);
+
+		gfxCommandBindKernel(gfx, PBRKernel);
+		// PBR scene info
+		gfxProgramSetParameter(gfx, PBRProgram, "camPos", camera.eye);
+		gfxProgramSetParameter(gfx, PBRProgram, "lightPos", light_position);
+		gfxProgramSetParameter(gfx, PBRProgram, "lightColor", light_color);
+
+		gfxProgramSetParameter(gfx, PBRProgram, "TextureSampler", textureSampler);
+		// Bind deferred shading render targets
+		gfxProgramSetParameter(gfx, PBRProgram, "g_WorldPosition", world_pos_buffer);
+		gfxProgramSetParameter(gfx, PBRProgram, "g_Albedo", albedo_buffer);
+		gfxProgramSetParameter(gfx, PBRProgram, "g_Normal", normal_buffer);
+		gfxProgramSetParameter(gfx, PBRProgram, "g_Metallic", metallic_buffer);
+		gfxProgramSetParameter(gfx, PBRProgram, "g_Roughness", roughness_buffer);
+
+		gfxCommandDraw(gfx, 6);
+		gfxCommandEndEvent(gfx);
 
 		// render scene composite
 		GfxTexture scene_texture;
 		if (selected_debug_view == 1)
+			scene_texture = albedo_buffer;
+		else if (selected_debug_view == 2)
 			scene_texture = normal_buffer;
 		else
-			scene_texture = color_buffer;
+			scene_texture = pbr_color_buffer;
 
+		gfxCommandBeginEvent(gfx, "Scene Composite");
 		gfxProgramSetParameter(gfx, compositeProgram, "g_SceneTexture", scene_texture);
 		gfxProgramSetParameter(gfx, compositeProgram, "TextureSampler", textureSampler);
 		gfxCommandBindKernel(gfx, compositeKernel);
 		gfxCommandDraw(gfx, 6);
+		gfxCommandEndEvent(gfx);
 
 		gfxImGuiRender();
 		gfxFrame(gfx);

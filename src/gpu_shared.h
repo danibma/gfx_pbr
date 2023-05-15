@@ -30,5 +30,7 @@ typedef glm::mat4 float4x4;
 
 struct GPUMaterial
 {
-	float4 color;
+	float4 albedo;
+	float metallic;
+	float roughness;
 };
