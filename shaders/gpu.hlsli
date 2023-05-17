@@ -1,12 +1,19 @@
 #pragma once
 
-static const float PI = 3.14159265359;
+static const float PI = 3.141592;
+static const float TwoPI = 2 * PI;
 
 struct DeferredVertexOutput
 {
 	float4 position : SV_Position;
     float4 worldPos : WorldPosition;
 	float3 normal	: OutNormal;
+};
+
+struct SkyboxVertexOutput
+{
+    float4 pixel_position : SV_Position;
+	float4 local_position : Position;
 };
 
 struct QuadResult

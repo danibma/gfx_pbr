@@ -54,6 +54,8 @@ Texture2D<float4> g_Normal;
 Texture2D<float4> g_Metallic;
 Texture2D<float4> g_Roughness;
 
+TextureCube g_IrradianceMap;
+
 float4 main(QuadResult quad) : SV_Target
 {
 	// gbuffer values
@@ -62,6 +64,10 @@ float4 main(QuadResult quad) : SV_Target
 	float3 normal    = g_Normal.Sample(g_TextureSampler, quad.uv).rgb;
 	float  metallic  = g_Metallic.Sample(g_TextureSampler, quad.uv).r;
 	float  roughness = g_Roughness.Sample(g_TextureSampler, quad.uv).r;
+	
+	// temp fix for displaying the skybox
+    if (albedo.x == 0.0f && albedo.y == 0.0f && albedo.z == 0.0f)
+        discard;
 	
 	float4 finalColor;
 
@@ -75,35 +81,44 @@ float4 main(QuadResult quad) : SV_Target
 	float3 Lo = (float3)0.0f;
     
     // do this per light, atm we only have one
-	float3 L = normalize(lightPos - worldPos); // light direction
-	float3 H = normalize(V + L); // half vector
-	float distance = length(lightColor - worldPos);
-	float attenuation = 1.0f / (distance * distance);
-	float3 radiance = lightColor * attenuation;
+	{
     
-    // cook-torrance brdf
-	float NDF = DistributionGGX(N, H, roughness);
-	float G   = GeometrySmith(N, V, L, roughness);
-	float3 F  = FresnelSchlick(max(dot(H, V), 0.0f), F0);
+        float3 L = normalize(lightPos - worldPos); // light direction
+        float3 H = normalize(V + L); // half vector
+        float distance = length(lightColor - worldPos);
+        float attenuation = 1.0f / (distance * distance);
+        float3 radiance = lightColor * attenuation;
     
-	float3 kS = F;
-	float3 kD = (float3) 1.0f - kS;
-	kD *= 1.0f - metallic;
+		// cook-torrance brdf
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
+    
+        float3 kS = F;
+        float3 kD = (float3) 1.0f - kS;
+        kD *= 1.0f - metallic;
 
-	// Lambertian diffuse
-    float3 diffuse = ((kD * albedo) / PI);
+		// Lambertian diffuse
+        float3 diffuse = kD * albedo / PI;
     
-	// Microfacet Specular BRDF
-	float3 numerator = NDF * G * F;
-	float denominator = 4.0f * max(dot(N, V), 0.0f) * max(dot(N, L), 0.0) + 0.0001;
-	float3 specular = numerator / denominator;
+        float3 numerator = NDF * G * F;
+        float denominator = 4.0f * max(dot(N, V), 0.0f) * max(dot(N, L), 0.0) + 0.0001;
+        float3 specular = numerator / denominator;
     
-    // add to outgoing radiance Lo
-	float NdotL = max(dot(N, L), 0.0f);
-    Lo += (diffuse + specular) * radiance * NdotL;
-    
-	float3 ambient = (float3)0.03f * albedo;
-	float3 color = ambient * Lo;
+		// add to outgoing radiance Lo
+        float NdotL = max(dot(N, L), 0.0f);
+        Lo += (diffuse + specular) * radiance * NdotL;
+    }
+	
+	// ambient lighting (we now use IBL as the ambient term)
+    float3 kS = FresnelSchlick(max(dot(N, V), 0.0), F0);
+    float3 kD = 1.0 - kS;
+    kD *= 1.0 - metallic;
+    float3 irradiance = g_IrradianceMap.Sample(g_TextureSampler, N).xyz;
+    float3 diffuse = irradiance * albedo;
+    float3 ambient = (kD * diffuse);
+	//float3 ambient = (float3)0.03f * albedo;
+    float3 color = ambient + Lo;
     
 	finalColor = float4(color, 1.0f);
     

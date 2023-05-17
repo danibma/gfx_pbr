@@ -12,6 +12,9 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <array>
+#include <filesystem>
+
+#include "stb_image.h"
 
 struct GPUMesh
 {
@@ -22,6 +25,56 @@ struct GPUMesh
 	GPUMaterial material;
 	GfxBuffer vertex_buffer, index_buffer;
 };
+
+GfxTexture gfxLoadTexture2D(GfxContext gfx, std::filesystem::path path)
+{
+	void* data;
+	int width, height, num_channels, bytes_per_channel;
+	DXGI_FORMAT format;
+	if (path.extension() == ".hdr") 
+	{
+		data = stbi_loadf(path.string().c_str(), &width, &height, &num_channels, 4);
+		GFX_ASSERT(data);
+		format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+		bytes_per_channel = 4;
+	}
+	else
+	{
+		data = stbi_load(path.string().c_str(), &width, &height, &num_channels, 4);
+		GFX_ASSERT(data);
+		if (stbi_is_16_bit(path.string().c_str()))
+		{
+			bytes_per_channel = 2;
+			format = DXGI_FORMAT_R16G16B16A16_UNORM;
+		}
+		else
+		{
+			bytes_per_channel = 1;
+			format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		}
+	}
+
+	num_channels = num_channels != 4 ? 4 : num_channels;
+
+	bool generate_mips = true;
+	if (path.extension() != ".hdr") 
+		generate_mips = false;
+
+	GfxTexture texture = gfxCreateTexture2D(gfx, width, height, format, generate_mips ? gfxCalculateMipCount(width, height) : 1);
+
+	uint32_t const texture_size = width * height * num_channels * bytes_per_channel;
+
+	GfxBuffer upload_texture_buffer = gfxCreateBuffer(gfx, texture_size, data, kGfxCpuAccess_Write);
+
+	gfxCommandCopyBufferToTexture(gfx, texture, upload_texture_buffer);
+	gfxDestroyBuffer(gfx, upload_texture_buffer);
+	if (generate_mips)
+		gfxCommandGenerateMips(gfx, texture);
+
+	stbi_image_free(data);
+
+	return texture;
+}
 
 int main()
 {
@@ -35,14 +88,26 @@ int main()
 	GfxScene scene = gfxCreateScene();
 	gfxImGuiInitialize(gfx);
 
+	GfxSamplerState linear_clamp_sampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+	GfxSamplerState linear_wrap_sampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
+
 	//gfxSceneImport(scene, "assets/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
 	gfxSceneImport(scene, "assets/sphere/sphere.gltf");
+	gfxSceneImport(scene, "assets/skybox.obj");
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
+	// Load skybox stuff
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/newport_loft.hdr");
+	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/skybox.obj");
+	GPUMesh skybox_mesh = {};
+	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
+	skybox_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * skybox_handle->vertices.size(), skybox_handle->vertices.data());
+	skybox_mesh.index_buffer = gfxCreateBuffer(gfx, sizeof(uint32_t) * skybox_handle->indices.size(), skybox_handle->indices.data());
+
 	// Send mesh data to the gpu
-	std::vector<GPUMesh> gpu_meshes(instancesCount);
-	for (uint32_t i = 0; i < instancesCount; ++i)
+	std::vector<GPUMesh> gpu_meshes(instancesCount - 1);
+	for (uint32_t i = 0; i < instancesCount - 1; ++i)
 	{
 		GfxInstance instance = instances[i];
 		const GfxConstRef<GfxMesh>& mesh = instance.mesh;
@@ -94,15 +159,38 @@ int main()
 	GfxKernel deferredShadingKernel = gfxCreateGraphicsKernel(gfx, deferredShadingProgram, deferredShadingDrawState);
 
 	GfxTexture pbr_color_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT);
+	GfxTexture pbr_depth_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_D32_FLOAT);
 	GfxDrawState pbrDrawState;
 	gfxDrawStateSetColorTarget(pbrDrawState, 0, pbr_color_buffer);
+	gfxDrawStateSetDepthStencilTarget(pbrDrawState, pbr_depth_buffer);
 	GfxProgram PBRProgram = gfxCreateProgram(gfx, "shaders/pbr_lighting");
 	GfxKernel PBRKernel = gfxCreateGraphicsKernel(gfx, PBRProgram, pbrDrawState);
 
+	// Skybox program
+	GfxDrawState sky_draw_state;
+	gfxDrawStateSetColorTarget(sky_draw_state, 0, pbr_color_buffer);
+	GfxProgram sky_program = gfxCreateProgram(gfx, "shaders/sky");
+	GfxKernel  sky_kernel = gfxCreateGraphicsKernel(gfx, sky_program, sky_draw_state);
+	GfxKernel  sky_cube_kernel = gfxCreateComputeKernel(gfx, sky_program);
+	GfxTexture environment_cube = gfxCreateTextureCube(gfx, 128, DXGI_FORMAT_R16G16B16A16_FLOAT, 5);
+	gfxCommandBindKernel(gfx, sky_cube_kernel);
+	gfxProgramSetParameter(gfx, sky_program, "inputTexture", environment_map);
+	gfxProgramSetParameter(gfx, sky_program, "outputTexture", environment_cube);
+	gfxProgramSetParameter(gfx, sky_program, "defaultSampler", linear_wrap_sampler);
+	gfxCommandDispatch(gfx, environment_map.getWidth() / 32, environment_map.getHeight() / 32, 6);
+
+	GfxProgram ibl_program = gfxCreateProgram(gfx, "shaders/ibl");
+	// irradiance map
+	GfxKernel irradiance_kernel = gfxCreateComputeKernel(gfx, ibl_program, "DrawIrradianceMap");
+	GfxTexture irradiance_map = gfxCreateTextureCube(gfx, 32, DXGI_FORMAT_R16G16B16A16_FLOAT, 5);
+	gfxCommandBindKernel(gfx, irradiance_kernel);
+	gfxProgramSetParameter(gfx, ibl_program, "g_OriginalEnvironmentMap", environment_cube);
+	gfxProgramSetParameter(gfx, ibl_program, "g_IrradianceMap", irradiance_map);
+	gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
+	gfxCommandDispatch(gfx, environment_cube.getWidth() / 32, environment_cube.getHeight() / 32, 6);
+
 	GfxProgram compositeProgram = gfxCreateProgram(gfx, "shaders/scene_composite");
 	GfxKernel compositeKernel   = gfxCreateGraphicsKernel(gfx, compositeProgram);
-
-	GfxSamplerState textureSampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 
 	Camera camera = CreateCamera(gfx, glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
 
@@ -126,6 +214,11 @@ int main()
 		if (ImGui::Begin("Debug"))
 		{
 			ImGui::Text("CPU: %.2fms(%.0fFPS)", deltaTime, 1000.0f / deltaTime);
+
+			ImGui::Separator();
+			ImGui::Text("Rendering");
+			if (ImGui::Button("Reload kernels"))
+				gfxKernelReloadAll(gfx);
 
 			ImGui::Separator();
 			ImGui::Text("Debug Views");
@@ -184,25 +277,40 @@ int main()
 		}
 		gfxCommandEndEvent(gfx);
 
+		// Clear PBR render targets
+		gfxCommandClearTexture(gfx, pbr_color_buffer);
+		gfxCommandClearTexture(gfx, pbr_depth_buffer);
+
+		// Render sky
+		gfxCommandBeginEvent(gfx, "Sky");
+		gfxProgramSetParameter(gfx, sky_program, "view", camera.view);
+		gfxProgramSetParameter(gfx, sky_program, "proj", camera.proj);
+		gfxProgramSetParameter(gfx, sky_program, "g_EnvironmentCube", irradiance_map);
+		gfxProgramSetParameter(gfx, sky_program, "LinearWrap", linear_clamp_sampler);
+		gfxCommandBindKernel(gfx, sky_kernel);
+		gfxCommandBindVertexBuffer(gfx, skybox_mesh.vertex_buffer);
+		gfxCommandBindIndexBuffer(gfx, skybox_mesh.index_buffer);
+		gfxCommandDrawIndexed(gfx, skybox_mesh.index_count);
+		gfxCommandEndEvent(gfx);
+
 		// PBR lighting
 		gfxCommandBeginEvent(gfx, "PBR Lighting Pass");
 		
-		// Clear PBR render targets
-		gfxCommandClearTexture(gfx, pbr_color_buffer);
-
 		gfxCommandBindKernel(gfx, PBRKernel);
 		// PBR scene info
 		gfxProgramSetParameter(gfx, PBRProgram, "camPos", camera.eye);
 		gfxProgramSetParameter(gfx, PBRProgram, "lightPos", light_position);
 		gfxProgramSetParameter(gfx, PBRProgram, "lightColor", light_color);
 
-		gfxProgramSetParameter(gfx, PBRProgram, "TextureSampler", textureSampler);
+		gfxProgramSetParameter(gfx, PBRProgram, "TextureSampler", linear_clamp_sampler);
 		// Bind deferred shading render targets
 		gfxProgramSetParameter(gfx, PBRProgram, "g_WorldPosition", world_pos_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Albedo", albedo_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Normal", normal_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Metallic", metallic_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Roughness", roughness_buffer);
+		// Bind irradiance map
+		gfxProgramSetParameter(gfx, PBRProgram, "g_IrradianceMap", irradiance_map);
 
 		gfxCommandDraw(gfx, 6);
 		gfxCommandEndEvent(gfx);
@@ -218,7 +326,7 @@ int main()
 
 		gfxCommandBeginEvent(gfx, "Scene Composite");
 		gfxProgramSetParameter(gfx, compositeProgram, "g_SceneTexture", scene_texture);
-		gfxProgramSetParameter(gfx, compositeProgram, "TextureSampler", textureSampler);
+		gfxProgramSetParameter(gfx, compositeProgram, "TextureSampler", linear_clamp_sampler);
 		gfxCommandBindKernel(gfx, compositeKernel);
 		gfxCommandDraw(gfx, 6);
 		gfxCommandEndEvent(gfx);
