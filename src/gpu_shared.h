@@ -2,6 +2,7 @@
 
 #ifdef __cplusplus
 
+#include <gfx.h>
 #include <glm/gtx/compatibility.hpp>
 #include <glm/gtx/type_aligned.hpp>
 
@@ -26,6 +27,15 @@ typedef glm::mat4 float4x4;
 
 #define SEMANTIC(X) : X
 
+#endif
+
+#ifdef __cplusplus
+struct GPUTexturedMaterial
+{
+	GfxTexture albedo_texture;
+	GfxTexture metallic_texture;
+	GfxTexture roughness_texture;
+};
 #endif
 
 struct GPUMaterial

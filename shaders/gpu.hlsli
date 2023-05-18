@@ -8,6 +8,7 @@ struct DeferredVertexOutput
 	float4 position : SV_Position;
     float4 worldPos : WorldPosition;
 	float3 normal	: OutNormal;
+    float2 uv		: TexCoord;
 };
 
 struct SkyboxVertexOutput

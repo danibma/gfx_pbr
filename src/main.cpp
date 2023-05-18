@@ -23,6 +23,7 @@ struct GPUMesh
 	glm::mat4 transform = glm::mat4(1.0f);
 
 	GPUMaterial material;
+	GPUTexturedMaterial textured_material;
 	GfxBuffer vertex_buffer, index_buffer;
 };
 
@@ -91,19 +92,32 @@ int main()
 	GfxSamplerState linear_clamp_sampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
 	GfxSamplerState linear_wrap_sampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
 
-	//gfxSceneImport(scene, "assets/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
-	gfxSceneImport(scene, "assets/sphere/sphere.gltf");
-	gfxSceneImport(scene, "assets/skybox.obj");
+	//gfxSceneImport(scene, "assets/models/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
+	gfxSceneImport(scene, "assets/models/sphere/sphere.gltf");
+	gfxSceneImport(scene, "assets/models/skybox.obj");
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
 	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment.hdr");
-	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/skybox.obj");
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/environment.hdr");
+	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
 	GPUMesh skybox_mesh = {};
 	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
 	skybox_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * skybox_handle->vertices.size(), skybox_handle->vertices.data());
 	skybox_mesh.index_buffer = gfxCreateBuffer(gfx, sizeof(uint32_t) * skybox_handle->indices.size(), skybox_handle->indices.data());
+
+	GfxTexture empty_texture;
+	{
+		empty_texture = gfxCreateTexture2D(gfx, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, 1);
+
+		uint32_t const texture_size = 4;
+
+		uint32_t data = 0x00000000;
+		GfxBuffer upload_texture_buffer = gfxCreateBuffer(gfx, texture_size, &data, kGfxCpuAccess_Write);
+
+		gfxCommandCopyBufferToTexture(gfx, empty_texture, upload_texture_buffer);
+		gfxDestroyBuffer(gfx, upload_texture_buffer);
+	}
 
 	// Send mesh data to the gpu
 	std::vector<GPUMesh> gpu_meshes(instancesCount - 1);
@@ -126,7 +140,16 @@ int main()
 			gpu_mesh.material.roughness = 1.0f;
 			gpu_mesh.material.metallic  = 0.0f;
 		}
-		
+
+#if 1
+		gpu_mesh.textured_material.albedo_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/albedo.png");
+		gpu_mesh.textured_material.metallic_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/metallic.png");
+		gpu_mesh.textured_material.roughness_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/roughness.png");
+#else 
+		gpu_mesh.textured_material.albedo_texture    = empty_texture;
+		gpu_mesh.textured_material.metallic_texture  = empty_texture;
+		gpu_mesh.textured_material.roughness_texture = empty_texture;
+#endif
 
 		gpu_mesh.transform	   = instance.transform;
 		gpu_mesh.index_count   = static_cast<uint32_t>(mesh->indices.size());
@@ -304,9 +327,13 @@ int main()
 
 		gfxCommandBindKernel(gfx, deferredShadingKernel);
 		gfxProgramSetParameter(gfx, deferredShadingProgram, "view_proj", camera.view_proj);
+		gfxProgramSetParameter(gfx, deferredShadingProgram, "LinearWrap", linear_wrap_sampler);
 		for (const GPUMesh& mesh : gpu_meshes)
 		{
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "g_Material", mesh.material);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "albedo_texture", mesh.textured_material.albedo_texture);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "metallic_texture", mesh.textured_material.metallic_texture);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "roughness_texture", mesh.textured_material.roughness_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", mesh.transform);
 			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);

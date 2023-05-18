@@ -13,6 +13,7 @@ DeferredVertexOutput main(float3 pos : Position, float3 normal : Normal, float2 
     result.position = position;
     result.worldPos = mul(model, float4(pos, 1.0f));
     result.normal   = normal;
+    result.uv       = uv;
     
     return result;
 }
