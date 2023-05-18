@@ -63,7 +63,7 @@ void EquirectToCubemap(uint3 ThreadID : SV_DispatchThreadID)
     float4 color = g_EnvironmentEquirectangular.SampleLevel(LinearWrap, float2(phi / TwoPI, theta / PI), 0);
 
 	// Write out color to output cubemap.
-    g_OutEnvironmentCubemap[ThreadID] = float4(pow(color.xyz, 2.2f), 1.0f);
+    g_OutEnvironmentCubemap[ThreadID] = color;
 }
 
 //
