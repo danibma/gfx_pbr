@@ -93,13 +93,15 @@ int main()
 	GfxSamplerState linear_wrap_sampler = gfxCreateSamplerState(gfx, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
 
 	//gfxSceneImport(scene, "assets/models/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
-	gfxSceneImport(scene, "assets/models/sphere/sphere.gltf");
+	//gfxSceneImport(scene, "assets/models/sphere/sphere.gltf");
+	gfxSceneImport(scene, "assets/models/cerberus/scene.gltf");
+	//gfxSceneImport(scene, "assets/models/DamagedHelmet/DamagedHelmet.gltf");
 	gfxSceneImport(scene, "assets/models/skybox.obj");
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
 	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/environment.hdr");
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/newport_loft.hdr");
 	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
 	GPUMesh skybox_mesh = {};
 	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
@@ -130,25 +132,50 @@ int main()
 		gpu_mesh.material = {};
 		if (mesh->material)
 		{
+			auto load_texture = [gfx, empty_texture](GfxConstRef<GfxImage> image_ref) -> GfxTexture
+			{
+				if (image_ref)
+				{
+					GfxTexture texture = gfxCreateTexture2D(gfx, image_ref->width, image_ref->height, image_ref->format, gfxCalculateMipCount(image_ref->width, image_ref->height));
+
+					uint32_t const texture_size = image_ref->width * image_ref->height * image_ref->channel_count * image_ref->bytes_per_channel;
+
+					GfxBuffer upload_texture_buffer = gfxCreateBuffer(gfx, texture_size, image_ref->data.data(), kGfxCpuAccess_Write);
+
+					gfxCommandCopyBufferToTexture(gfx, texture, upload_texture_buffer);
+					gfxDestroyBuffer(gfx, upload_texture_buffer);
+					gfxCommandGenerateMips(gfx, texture);
+
+					return texture;
+				}
+				else
+				{
+					return empty_texture;
+				}
+			};
+
+			GfxMaterial mat = *mesh->material;
+
 			gpu_mesh.material.albedo    = mesh->material->albedo;
 			gpu_mesh.material.roughness = mesh->material->roughness;
 			gpu_mesh.material.metallic  = mesh->material->metallicity;
+
+			gpu_mesh.textured_material.albedo_texture = load_texture(mesh->material->albedo_map);
+			gpu_mesh.textured_material.metallic_texture = load_texture(mesh->material->metallicity_map);
+			gpu_mesh.textured_material.roughness_texture = load_texture(mesh->material->roughness_map);
+			gpu_mesh.textured_material.emissive_texture = load_texture(mesh->material->emissivity_map);
 		}
 		else
 		{
 			gpu_mesh.material.albedo    = float4(1.0f);
 			gpu_mesh.material.roughness = 1.0f;
-			gpu_mesh.material.metallic  = 0.0f;
+			gpu_mesh.material.metallic  = 1.0f;
 		}
 
-#if 1
+#if 0 // for the sphere
 		gpu_mesh.textured_material.albedo_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/albedo.png");
 		gpu_mesh.textured_material.metallic_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/metallic.png");
 		gpu_mesh.textured_material.roughness_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/roughness.png");
-#else 
-		gpu_mesh.textured_material.albedo_texture    = empty_texture;
-		gpu_mesh.textured_material.metallic_texture  = empty_texture;
-		gpu_mesh.textured_material.roughness_texture = empty_texture;
 #endif
 
 		gpu_mesh.transform	   = instance.transform;
@@ -168,6 +195,7 @@ int main()
 	GfxTexture normal_buffer	= gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); normal_buffer.setName("normal_buffer");
 	GfxTexture metallic_buffer  = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); metallic_buffer.setName("metallic_buffer");
 	GfxTexture roughness_buffer = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); roughness_buffer.setName("roughness_buffer");
+	GfxTexture emissive_buffer  = gfxCreateTexture2D(gfx, DXGI_FORMAT_R16G16B16A16_FLOAT); emissive_buffer.setName("emissive_buffer");
 	GfxTexture depth_buffer		= gfxCreateTexture2D(gfx, DXGI_FORMAT_D32_FLOAT);          
 
 	GfxDrawState deferredShadingDrawState;
@@ -176,6 +204,7 @@ int main()
 	gfxDrawStateSetColorTarget(deferredShadingDrawState, 2, normal_buffer);
 	gfxDrawStateSetColorTarget(deferredShadingDrawState, 3, metallic_buffer);
 	gfxDrawStateSetColorTarget(deferredShadingDrawState, 4, roughness_buffer);
+	gfxDrawStateSetColorTarget(deferredShadingDrawState, 5, emissive_buffer);
 	gfxDrawStateSetDepthStencilTarget(deferredShadingDrawState, depth_buffer);
 
 	GfxProgram deferredShadingProgram = gfxCreateProgram(gfx, "shaders/deferred_shading");
@@ -323,6 +352,7 @@ int main()
 		gfxCommandClearTexture(gfx, normal_buffer);
 		gfxCommandClearTexture(gfx, metallic_buffer);
 		gfxCommandClearTexture(gfx, roughness_buffer);
+		gfxCommandClearTexture(gfx, emissive_buffer);
 		gfxCommandClearTexture(gfx, depth_buffer);
 
 		gfxCommandBindKernel(gfx, deferredShadingKernel);
@@ -334,7 +364,8 @@ int main()
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "albedo_texture", mesh.textured_material.albedo_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "metallic_texture", mesh.textured_material.metallic_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "roughness_texture", mesh.textured_material.roughness_texture);
-			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", mesh.transform);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "emissive_texture", mesh.textured_material.emissive_texture);
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", glm::scale(mesh.transform, glm::vec3(0.2f)));
 			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
 			gfxCommandDrawIndexed(gfx, mesh.index_count);
@@ -373,6 +404,7 @@ int main()
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Normal", normal_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Metallic", metallic_buffer);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_Roughness", roughness_buffer);
+		gfxProgramSetParameter(gfx, PBRProgram, "g_Emissive", emissive_buffer);
 		// Bind irradiance map
 		gfxProgramSetParameter(gfx, PBRProgram, "g_IrradianceMap", irradiance_map);
 		gfxProgramSetParameter(gfx, PBRProgram, "g_PrefilterMap", prefilter_map);

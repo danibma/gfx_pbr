@@ -58,6 +58,7 @@ Texture2D<float4> g_Albedo;
 Texture2D<float4> g_Normal;
 Texture2D<float4> g_Metallic;
 Texture2D<float4> g_Roughness;
+Texture2D<float4> g_Emissive;
 
 TextureCube g_IrradianceMap;
 TextureCube g_PrefilterMap;
@@ -69,6 +70,7 @@ float4 main(QuadResult quad) : SV_Target
 	float3 worldPos  = g_WorldPosition.Sample(g_TextureSampler, quad.uv).rgb;
 	float3 albedo    = g_Albedo.Sample(g_TextureSampler, quad.uv).rgb;
 	float3 normal    = g_Normal.Sample(g_TextureSampler, quad.uv).rgb;
+    float3 emissive  = g_Emissive.Sample(g_TextureSampler, quad.uv).rgb;
 	float  metallic  = g_Metallic.Sample(g_TextureSampler, quad.uv).r;
 	float  roughness = g_Roughness.Sample(g_TextureSampler, quad.uv).r;
 	
@@ -132,9 +134,10 @@ float4 main(QuadResult quad) : SV_Target
     float2 envBRDF = g_LUT.SampleLevel(g_TextureSampler, float2(max(dot(N, V), 0.0), roughness), 0).rg;
     float3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
   
-    float3 ambient = (kD * diffuse + specular);
+    float3 ambient = (kD * diffuse + specular) + emissive;
     
     float3 color = ambient + Lo;
+    //float3 color = (float3)roughness;
     
 	finalColor = float4(color, 1.0f);
     

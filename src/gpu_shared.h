@@ -35,6 +35,7 @@ struct GPUTexturedMaterial
 	GfxTexture albedo_texture;
 	GfxTexture metallic_texture;
 	GfxTexture roughness_texture;
+	GfxTexture emissive_texture;
 };
 #endif
 
