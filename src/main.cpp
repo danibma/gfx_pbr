@@ -101,7 +101,7 @@ int main()
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
 	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/newport_loft.hdr");
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/quarry_04_4k.hdr");
 	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
 	GPUMesh skybox_mesh = {};
 	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
