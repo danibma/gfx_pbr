@@ -1,143 +1,26 @@
 #include "gpu.hlsli"
 
+// Code inspired by
+// Epic's Real Shading in Unreal Engine 4 - https://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf
+// PBR by Michal Siejak - https://github.com/Nadrin/PBR
+
 SamplerState LinearWrap;
 
-TextureCube g_OriginalEnvironmentMap;
+TextureCube g_EnvironmentCubemap;
 
-RWTexture2DArray<float4> g_IrradianceMap;
-RWTexture2DArray<float4> g_PreFilteredMap;
-
-// Calculate normalized sampling direction vector based on current fragment coordinates.
-// This is essentially "inverse-sampling": we reconstruct what the sampling vector would be if we wanted it to "hit"
-// this particular fragment in a cubemap.
-float3 GetSamplingVector(uint3 ThreadID)
-{
-	float outputWidth, outputHeight, outputDepth;
-	g_IrradianceMap.GetDimensions(outputWidth, outputHeight, outputDepth);
-
-	float2 st = ThreadID.xy / float2(outputWidth, outputHeight);
-	float2 uv = 2.0 * float2(st.x, 1.0 - st.y) - float2(1.0, 1.0);
-
-	// Select vector based on cubemap face index.
-	float3 ret;
-	switch (ThreadID.z)
-	{
-		case 0:
-			ret = float3(1.0, uv.y, -uv.x);
-			break;
-		case 1:
-			ret = float3(-1.0, uv.y, uv.x);
-			break;
-		case 2:
-			ret = float3(uv.x, 1.0, -uv.y);
-			break;
-		case 3:
-			ret = float3(uv.x, -1.0, uv.y);
-			break;
-		case 4:
-			ret = float3(uv.x, uv.y, 1.0);
-			break;
-		case 5:
-			ret = float3(-uv.x, uv.y, -1.0);
-			break;
-	}
-	return normalize(ret);
-}
-
-[numthreads(32, 32, 1)]
-void DrawIrradianceMap(uint3 threadID : SV_DispatchThreadID)
-{
-	float3 N = GetSamplingVector(threadID);
-	
-	float3 irradiance = (float3)0.0f;
-	
-	float3 up    = float3(0.0, 1.0, 0.0);
-	float3 right = normalize(cross(up, N));
-	up = normalize(cross(N, right));
-
-	float sampleDelta = 0.025;
-	float nrSamples = 0.0;
-	for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta)
-	{
-		for (float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta)
-		{
-			// spherical to cartesian (in tangent space)
-			float3 tangentSample = float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
-			// tangent space to world
-			float3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
-
-			irradiance += g_OriginalEnvironmentMap.SampleLevel(LinearWrap, sampleVec, 0).rgb * cos(theta) * sin(theta);
-			nrSamples++;
-		}
-	}
-	irradiance = PI * irradiance * (1.0 / float(nrSamples));
-	
-	g_IrradianceMap[threadID] = float4(irradiance, 1.0f);
-}
-
-// Specular
-static const float Epsilon = 0.00001;
-
-static const uint NumSamples = 1024;
-static const float InvNumSamples = 1.0 / float(NumSamples);
-
-// Roughness value to pre-filter for.
-float roughness;
-
-// Compute Van der Corput radical inverse
-// See: http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
-float radicalInverse_VdC(uint bits)
-{
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
-}
-
-// Sample i-th point from Hammersley point set of NumSamples points total.
-float2 sampleHammersley(uint i)
-{
-    return float2(i * InvNumSamples, radicalInverse_VdC(i));
-}
-
-// Importance sample GGX normal distribution function for a fixed roughness value.
-// This returns normalized half-vector between Li & Lo.
-// For derivation see: http://blog.tobias-franke.eu/2014/03/30/notes_on_importance_sampling.html
-float3 sampleGGX(float u1, float u2, float roughness)
-{
-    float alpha = roughness * roughness;
-
-    float cosTheta = sqrt((1.0 - u2) / (1.0 + (alpha * alpha - 1.0) * u2));
-    float sinTheta = sqrt(1.0 - cosTheta * cosTheta); // Trig. identity
-    float phi = TwoPI * u1;
-
-	// Convert to Cartesian upon return.
-    return float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
-}
-
-// GGX/Towbridge-Reitz normal distribution function.
-// Uses Disney's reparametrization of alpha = roughness^2.
-float ndfGGX(float cosLh, float roughness)
-{
-    float alpha = roughness * roughness;
-    float alphaSq = alpha * alpha;
-
-    float denom = (cosLh * cosLh) * (alphaSq - 1.0) + 1.0;
-    return alphaSq / (PI * denom * denom);
-}
+//
+// Equirectangular to cubemap
+//
+Texture2D g_EnvironmentEquirectangular : register(t0);
+RWTexture2DArray<float4> g_OutEnvironmentCubemap : register(u0);
 
 // Calculate normalized sampling direction vector based on current fragment coordinates.
 // This is essentially "inverse-sampling": we reconstruct what the sampling vector would be if we wanted it to "hit"
 // this particular fragment in a cubemap.
-float3 getSamplingVector(uint3 ThreadID)
+float3 GetSamplingVector(uint3 ThreadID, float OutputWidth, float OutputHeight)
 {
-    float outputWidth, outputHeight, outputDepth;
-    g_PreFilteredMap.GetDimensions(outputWidth, outputHeight, outputDepth);
-
-    float2 st = ThreadID.xy / float2(outputWidth, outputHeight);
-    float2 uv = 2.0 * float2(st.x, 1.0 - st.y) - 1.0;
+    float2 st = ThreadID.xy / float2(OutputWidth, OutputHeight);
+    float2 uv = 2.0 * float2(st.x, 1.0 - st.y) - float2(1.0, 1.0);
 
 	// Select vector based on cubemap face index.
     float3 ret;
@@ -165,8 +48,121 @@ float3 getSamplingVector(uint3 ThreadID)
     return normalize(ret);
 }
 
+[numthreads(32, 32, 1)]
+void EquirectToCubemap(uint3 ThreadID : SV_DispatchThreadID)
+{
+    float outputWidth, outputHeight, outputDepth;
+    g_OutEnvironmentCubemap.GetDimensions(outputWidth, outputHeight, outputDepth);
+    float3 v = GetSamplingVector(ThreadID, outputWidth, outputHeight);
+	
+	// Convert Cartesian direction vector to spherical coordinates.
+    float phi = atan2(v.z, v.x);
+    float theta = acos(v.y);
+
+	// Sample equirectangular texture.
+    float4 color = g_EnvironmentEquirectangular.SampleLevel(LinearWrap, float2(phi / TwoPI, theta / PI), 0);
+
+	// Write out color to output cubemap.
+    g_OutEnvironmentCubemap[ThreadID] = color;
+}
+
+//
+// Irradiance map
+//
+RWTexture2DArray<float4> g_IrradianceMap;
+
+[numthreads(32, 32, 1)]
+void DrawIrradianceMap(uint3 threadID : SV_DispatchThreadID)
+{
+    uint outputWidth, outputHeight, outputDepth;
+    g_IrradianceMap.GetDimensions(outputWidth, outputHeight, outputDepth);
+    
+    float3 N = GetSamplingVector(threadID, float(outputWidth), float(outputHeight));
+	
+	float3 irradiance = (float3)0.0f;
+	
+	float3 up    = float3(0.0, 1.0, 0.0);
+	float3 right = normalize(cross(up, N));
+	up = normalize(cross(N, right));
+
+	float sampleDelta = 0.025;
+	float nrSamples = 0.0;
+	for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta)
+	{
+		for (float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta)
+		{
+			// spherical to cartesian (in tangent space)
+			float3 tangentSample = float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+			// tangent space to world
+			float3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
+
+			irradiance += g_EnvironmentCubemap.SampleLevel(LinearWrap, sampleVec, 0).rgb * cos(theta) * sin(theta);
+			nrSamples++;
+		}
+	}
+	irradiance = PI * irradiance * (1.0 / float(nrSamples));
+	
+	g_IrradianceMap[threadID] = float4(irradiance, 1.0f);
+}
+
+//
+// Specular
+//
+static const float Epsilon = 0.00001;
+
+static const uint NumSamples = 1024;
+static const float InvNumSamples = 1.0 / float(NumSamples);
+
+// Roughness value to pre-filter for.
+float roughness;
+
+RWTexture2DArray<float4> g_PreFilteredMap;
+
+// Van der Corput radical inverse - http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
+float RadicalInverse_VdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+// Sample i-th point from Hammersley point set of NumSamples points total.
+float2 Hammersley(uint i)
+{
+    return float2(i * InvNumSamples, RadicalInverse_VdC(i));
+}
+
+// Importance sample GGX normal distribution function for a fixed roughness value.
+// This returns normalized half-vector between Li & Lo.
+// For derivation see: http://blog.tobias-franke.eu/2014/03/30/notes_on_importance_sampling.html
+float3 SampleGGX(float u1, float u2, float roughness)
+{
+    float alpha = roughness * roughness;
+
+    float cosTheta = sqrt((1.0 - u2) / (1.0 + (alpha * alpha - 1.0) * u2));
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta); // Trig. identity
+    float phi = TwoPI * u1;
+
+	// Convert to Cartesian upon return.
+    return float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+}
+
+// GGX/Towbridge-Reitz normal distribution function.
+// Uses Disney's reparametrization of alpha = roughness^2.
+float NDF_GGX(float cosLh, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alphaSq = alpha * alpha;
+
+    float denom = (cosLh * cosLh) * (alphaSq - 1.0) + 1.0;
+    return alphaSq / (PI * denom * denom);
+}
+
 // Compute orthonormal basis for converting from tanget/shading space to world space.
-void computeBasisVectors(const float3 N, out float3 S, out float3 T)
+void ComputeBasisVectors(const float3 N, out float3 S, out float3 T)
 {
 	// Branchless select non-degenerate T.
     T = cross(N, float3(0.0, 1.0, 0.0));
@@ -177,7 +173,7 @@ void computeBasisVectors(const float3 N, out float3 S, out float3 T)
 }
 
 // Convert point from tangent/shading space to world space.
-float3 tangentToWorld(const float3 v, const float3 N, const float3 S, const float3 T)
+float3 TangentToWorld(const float3 v, const float3 N, const float3 S, const float3 T)
 {
     return S * v.x + T * v.y + N * v.z;
 }
@@ -195,18 +191,18 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 	
 	// Get input cubemap dimensions at zero mipmap level.
     float inputWidth, inputHeight, inputLevels;
-    g_OriginalEnvironmentMap.GetDimensions(0, inputWidth, inputHeight, inputLevels);
+    g_EnvironmentCubemap.GetDimensions(0, inputWidth, inputHeight, inputLevels);
 
 	// Solid angle associated with a single cubemap texel at zero mipmap level.
 	// This will come in handy for importance sampling below.
     float wt = 4.0 * PI / (6 * inputWidth * inputHeight);
 	
 	// Approximation: Assume zero viewing angle (isotropic reflections).
-    float3 N = getSamplingVector(ThreadID);
+    float3 N = GetSamplingVector(ThreadID, float(outputWidth), float(outputHeight));
     float3 Lo = N;
 	
     float3 S, T;
-    computeBasisVectors(N, S, T);
+    ComputeBasisVectors(N, S, T);
 
     float3 color = 0;
     float weight = 0;
@@ -215,8 +211,8 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 	// Weight by cosine term since Epic claims it generally improves quality.
     for (uint i = 0; i < NumSamples; ++i)
     {
-        float2 u = sampleHammersley(i);
-        float3 Lh = tangentToWorld(sampleGGX(u.x, u.y, roughness), N, S, T);
+        float2 u = Hammersley(i);
+        float3 Lh = TangentToWorld(SampleGGX(u.x, u.y, roughness), N, S, T);
 
 		// Compute incident direction (Li) by reflecting viewing direction (Lo) around half-vector (Lh).
         float3 Li = 2.0 * dot(Lo, Lh) * Lh - Lo;
@@ -231,7 +227,7 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 
 			// GGX normal distribution function (D term) probability density function.
 			// Scaling by 1/4 is due to change of density in terms of Lh to Li (and since N=V, rest of the scaling factor cancels out).
-            float pdf = ndfGGX(cosLh, roughness) * 0.25;
+            float pdf = NDF_GGX(cosLh, roughness) * 0.25;
 
 			// Solid angle associated with this sample.
             float ws = 1.0 / (NumSamples * pdf);
@@ -239,7 +235,7 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 			// Mip level to sample from.
             float mipLevel = max(0.5 * log2(ws / wt) + 1.0, 0.0);
 
-            color += g_OriginalEnvironmentMap.SampleLevel(LinearWrap, Li, mipLevel).rgb * cosLi;
+            color += g_EnvironmentCubemap.SampleLevel(LinearWrap, Li, mipLevel).rgb * cosLi;
             weight += cosLi;
         }
     }
@@ -251,21 +247,20 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 // Pre-integrates Cook-Torrance specular BRDF for varying roughness and viewing directions.
 // Results are saved into 2D LUT texture in the form of DFG1 and DFG2 split-sum approximation terms,
 // which act as a scale and bias to F0 (Fresnel reflectance at normal incidence) during rendering.
-
 RWTexture2D<float2> LUT : register(u0);
 
 // Single term for separable Schlick-GGX below.
-float gaSchlickG1(float cosTheta, float k)
+float SchlickG1(float cosTheta, float k)
 {
     return cosTheta / (cosTheta * (1.0 - k) + k);
 }
 
 // Schlick-GGX approximation of geometric attenuation function using Smith's method (IBL version).
-float gaSchlickGGX_IBL(float cosLi, float cosLo, float roughness)
+float SchlickGGX_IBL(float cosLi, float cosLo, float roughness)
 {
     float r = roughness;
     float k = (r * r) / 2.0; // Epic suggests using this roughness remapping for IBL lighting.
-    return gaSchlickG1(cosLi, k) * gaSchlickG1(cosLo, k);
+    return SchlickG1(cosLi, k) * SchlickG1(cosLo, k);
 }
 
 [numthreads(32, 32, 1)]
@@ -293,10 +288,10 @@ void ComputeBRDFLUT(uint2 ThreadID : SV_DispatchThreadID)
 
     for (uint i = 0; i < NumSamples; ++i)
     {
-        float2 u = sampleHammersley(i);
+        float2 u = Hammersley(i);
 
 		// Sample directly in tangent/shading space since we don't care about reference frame as long as it's consistent.
-        float3 Lh = sampleGGX(u.x, u.y, roughness);
+        float3 Lh = SampleGGX(u.x, u.y, roughness);
 
 		// Compute incident direction (Li) by reflecting viewing direction (Lo) around half-vector (Lh).
         float3 Li = 2.0 * dot(Lo, Lh) * Lh - Lo;
@@ -307,7 +302,7 @@ void ComputeBRDFLUT(uint2 ThreadID : SV_DispatchThreadID)
 
         if (cosLi > 0.0)
         {
-            float G = gaSchlickGGX_IBL(cosLi, cosLo, roughness);
+            float G = SchlickGGX_IBL(cosLi, cosLo, roughness);
             float Gv = G * cosLoLh / (cosLh * cosLo);
             float Fc = pow(1.0 - cosLoLh, 5);
 
