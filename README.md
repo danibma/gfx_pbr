@@ -6,11 +6,13 @@ DirectX Raytracing capable GPU and compatible drivers<br>
 
 # Showcase
 ### PBR+IBL
-![alt text](pbr+ibl.png)
+![alt text](showcase/pbr+ibl.png)
 ### Textured PBR+IBL
-![alt text](pbr+ibl+textures.png)
-### Textured Damaged Helmet PBR+IBL
-![alt text](pbr+ibl+model.png)
+![alt text](showcase/pbr+ibl+textures.png)
+### Damaged Helmet PBR+IBL
+![alt text](showcase/pbr+ibl+helmet.png)
+### Cerberus PBR+IBL
+![alt text](showcase/pbr+ibl+cerberus.png)
 
 # Resources
 [Real Shading in Unreal Engine 4](https://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf)<br>
