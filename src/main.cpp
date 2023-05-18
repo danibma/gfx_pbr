@@ -101,7 +101,7 @@ int main()
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
 	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/quarry_04_4k.hdr");
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/rotes_rathaus_4k.hdr");
 	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
 	GPUMesh skybox_mesh = {};
 	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
@@ -365,7 +365,7 @@ int main()
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "metallic_texture", mesh.textured_material.metallic_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "roughness_texture", mesh.textured_material.roughness_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "emissive_texture", mesh.textured_material.emissive_texture);
-			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", glm::scale(mesh.transform, glm::vec3(0.2f)));
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", glm::scale(mesh.transform, glm::vec3(0.3f)));
 			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
 			gfxCommandDrawIndexed(gfx, mesh.index_count);

@@ -20,7 +20,7 @@ RWTexture2DArray<float4> g_OutEnvironmentCubemap : register(u0);
 float3 GetSamplingVector(uint3 ThreadID, float OutputWidth, float OutputHeight)
 {
     float2 st = ThreadID.xy / float2(OutputWidth, OutputHeight);
-    float2 uv = 2.0 * float2(st.x, 1.0 - st.y) - float2(1.0, 1.0);
+    float2 uv = 2.0 * float2(st.x, 1.0 - st.y) - 1.0;
 
 	// Select vector based on cubemap face index.
     float3 ret;
@@ -63,7 +63,7 @@ void EquirectToCubemap(uint3 ThreadID : SV_DispatchThreadID)
     float4 color = g_EnvironmentEquirectangular.SampleLevel(LinearWrap, float2(phi / TwoPI, theta / PI), 0);
 
 	// Write out color to output cubemap.
-    g_OutEnvironmentCubemap[ThreadID] = color;
+    g_OutEnvironmentCubemap[ThreadID] = float4(pow(color.xyz, 2.2f), 1.0f);
 }
 
 //
@@ -85,7 +85,7 @@ void DrawIrradianceMap(uint3 threadID : SV_DispatchThreadID)
 	float3 right = normalize(cross(up, N));
 	up = normalize(cross(N, right));
 
-	float sampleDelta = 0.025;
+	float sampleDelta = 0.02;
 	float nrSamples = 0.0;
 	for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta)
 	{
@@ -100,7 +100,7 @@ void DrawIrradianceMap(uint3 threadID : SV_DispatchThreadID)
 			nrSamples++;
 		}
 	}
-	irradiance = PI * irradiance * (1.0 / float(nrSamples));
+	irradiance = PI * irradiance / nrSamples;
 	
 	g_IrradianceMap[threadID] = float4(irradiance, 1.0f);
 }
@@ -217,13 +217,13 @@ void PreFilterEnvMap(uint3 ThreadID : SV_DispatchThreadID)
 		// Compute incident direction (Li) by reflecting viewing direction (Lo) around half-vector (Lh).
         float3 Li = 2.0 * dot(Lo, Lh) * Lh - Lo;
 
-        float cosLi = dot(N, Li);
+        float cosLi = saturate(dot(N, Li));
         if (cosLi > 0.0)
         {
 			// Use Mipmap Filtered Importance Sampling to improve convergence.
 			// See: https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch20.html, section 20.4
 
-            float cosLh = max(dot(N, Lh), 0.0);
+            float cosLh = saturate(dot(N, Lh));
 
 			// GGX normal distribution function (D term) probability density function.
 			// Scaling by 1/4 is due to change of density in terms of Lh to Li (and since N=V, rest of the scaling factor cancels out).
