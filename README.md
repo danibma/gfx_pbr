@@ -5,8 +5,10 @@ CMake 3.22 or newer (can use Visual Studio, VSCode or any other CMake supported 
 DirectX Raytracing capable GPU and compatible drivers<br>
 
 # Showcase
-### First iteration of PBR+IBL
+### PBR+IBL
 ![alt text](pbr+ibl.png)
+### Textured PBR+IBL
+![alt text](pbr+ibl+textures.png)
 
 # Resources
 [Real Shading in Unreal Engine 4](https://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf)<br>
