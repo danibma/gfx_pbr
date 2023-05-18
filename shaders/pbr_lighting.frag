@@ -40,6 +40,11 @@ float3 FresnelSchlick(float cosTheta, float3 F0)
 	return F0 + (1.0f - F0) * pow(clamp(1.0 - cosTheta, 0.0f, 1.0f), 5.0f);
 }
 
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max((float3)(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 // Camera info
 float4 camPos;
 
@@ -55,6 +60,8 @@ Texture2D<float4> g_Metallic;
 Texture2D<float4> g_Roughness;
 
 TextureCube g_IrradianceMap;
+TextureCube g_PrefilterMap;
+Texture2D   g_LUT;
 
 float4 main(QuadResult quad) : SV_Target
 {
@@ -73,6 +80,7 @@ float4 main(QuadResult quad) : SV_Target
 
 	float3 N = normalize(normal);
 	float3 V = normalize(camPos.rgb - worldPos); // view direction
+    float3 R = reflect(-V, N);
     
 	float3 F0 = (float3)0.04f;
 	F0 = lerp(F0, albedo, metallic);
@@ -110,14 +118,22 @@ float4 main(QuadResult quad) : SV_Target
         Lo += (diffuse + specular) * radiance * NdotL;
     }
 	
-	// ambient lighting (we now use IBL as the ambient term)
-    float3 kS = FresnelSchlick(max(dot(N, V), 0.0), F0);
+    float3 F = FresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
+
+    float3 kS = F;
     float3 kD = 1.0 - kS;
     kD *= 1.0 - metallic;
-    float3 irradiance = g_IrradianceMap.Sample(g_TextureSampler, N).xyz;
+  
+    float3 irradiance = g_IrradianceMap.SampleLevel(g_TextureSampler, N, 0).rgb;
     float3 diffuse = irradiance * albedo;
-    float3 ambient = (kD * diffuse);
-	//float3 ambient = (float3)0.03f * albedo;
+  
+    const float MAX_REFLECTION_LOD = 4.0;
+    float3 prefilteredColor = g_PrefilterMap.SampleLevel(g_TextureSampler, R, roughness * MAX_REFLECTION_LOD).rgb;
+    float2 envBRDF = g_LUT.SampleLevel(g_TextureSampler, float2(max(dot(N, V), 0.0), roughness), 0).rg;
+    float3 specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+  
+    float3 ambient = (kD * diffuse + specular);
+    
     float3 color = ambient + Lo;
     
 	finalColor = float4(color, 1.0f);
