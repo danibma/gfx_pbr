@@ -98,7 +98,7 @@ int main()
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
 	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/kiara_1_dawn_4k.hdr");
+	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment.hdr");
 	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/skybox.obj");
 	GPUMesh skybox_mesh = {};
 	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
@@ -176,10 +176,9 @@ int main()
 	GfxProgram ibl_program = gfxCreateProgram(gfx, "shaders/ibl");
 
 	GfxTexture environment_cube = gfxCreateTextureCube(gfx, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, 1);
-	GfxTexture irradiance_map = gfxCreateTextureCube(gfx, 32, DXGI_FORMAT_R16G16B16A16_FLOAT, 1);
+	GfxTexture irradiance_map = gfxCreateTextureCube(gfx, 128, DXGI_FORMAT_R16G16B16A16_FLOAT, 1);
 	GfxTexture prefilter_map = gfxCreateTextureCube(gfx, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, 5);
-	gfxCommandGenerateMips(gfx, prefilter_map);
-	GfxTexture brdf_lut_map = gfxCreateTexture2D(gfx, 256, 256, DXGI_FORMAT_R16G16_FLOAT, 5);
+	GfxTexture brdf_lut_map = gfxCreateTexture2D(gfx, 256, 256, DXGI_FORMAT_R16G16_FLOAT, 1);
 
 	// Transform equirectangular map to cubemap
 	{
