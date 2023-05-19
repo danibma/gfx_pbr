@@ -103,14 +103,6 @@ int main()
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
 
-	// Load skybox stuff
-	GfxTexture environment_map = gfxLoadTexture2D(gfx, "assets/environment/rotes_rathaus_4k.hdr");
-	const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
-	GPUMesh skybox_mesh = {};
-	skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
-	skybox_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * skybox_handle->vertices.size(), skybox_handle->vertices.data());
-	skybox_mesh.index_buffer = gfxCreateBuffer(gfx, sizeof(uint32_t) * skybox_handle->indices.size(), skybox_handle->indices.data());
-
 	GfxTexture empty_texture;
 	{
 		empty_texture = gfxCreateTexture2D(gfx, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, 1);
@@ -227,59 +219,80 @@ int main()
 	GfxProgram sky_program = gfxCreateProgram(gfx, "shaders/sky");
 	GfxKernel  sky_kernel = gfxCreateGraphicsKernel(gfx, sky_program, sky_draw_state);
 
-	// IBL stuff
-	GfxProgram ibl_program = gfxCreateProgram(gfx, "shaders/ibl");
-
+	// textures used for IBL and PBR
 	GfxTexture environment_cube = gfxCreateTextureCube(gfx, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, 1);
 	GfxTexture irradiance_map = gfxCreateTextureCube(gfx, 128, DXGI_FORMAT_R16G16B16A16_FLOAT, 1);
 	GfxTexture prefilter_map = gfxCreateTextureCube(gfx, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, 5);
 	GfxTexture brdf_lut_map = gfxCreateTexture2D(gfx, 256, 256, DXGI_FORMAT_R16G16_FLOAT, 1);
 
-	// Transform equirectangular map to cubemap
+	GPUMesh skybox_mesh = {};
+	bool has_to_change_env_map = true;
+	auto load_env_map = [&gfx, &skybox_mesh, &environment_cube, &irradiance_map, 
+						 &prefilter_map, &brdf_lut_map, &scene, &linear_wrap_sampler, &has_to_change_env_map]
+						 (std::string_view env_map_path)
 	{
-		GfxKernel equirect_to_cubemap_kernel = gfxCreateComputeKernel(gfx, ibl_program, "EquirectToCubemap");
-		gfxCommandBindKernel(gfx, equirect_to_cubemap_kernel);
-		gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentEquirectangular", environment_map);
-		gfxProgramSetParameter(gfx, ibl_program, "g_OutEnvironmentCubemap", environment_cube);
-		gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
-		gfxCommandDispatch(gfx, environment_cube.getWidth() / 32, environment_cube.getHeight() / 32, 6);
-	}
+		// Load skybox stuff
+		GfxTexture environment_map = gfxLoadTexture2D(gfx, env_map_path);
+		const GfxConstRef<GfxMesh>& skybox_handle = gfxSceneFindObjectByAssetFile<GfxMesh>(scene, "assets/models/skybox.obj");
+		skybox_mesh.index_count = static_cast<uint32_t>(skybox_handle->indices.size());
+		if (skybox_mesh.vertex_buffer)
+			gfxDestroyBuffer(gfx, skybox_mesh.vertex_buffer);
+		skybox_mesh.vertex_buffer = gfxCreateBuffer(gfx, sizeof(GfxVertex) * skybox_handle->vertices.size(), skybox_handle->vertices.data());
+		if (skybox_mesh.index_buffer)
+			gfxDestroyBuffer(gfx, skybox_mesh.index_buffer);
+		skybox_mesh.index_buffer = gfxCreateBuffer(gfx, sizeof(uint32_t) * skybox_handle->indices.size(), skybox_handle->indices.data());
 
-	// irradiance map
-	{
-		GfxKernel irradiance_kernel = gfxCreateComputeKernel(gfx, ibl_program, "DrawIrradianceMap");
-		gfxCommandBindKernel(gfx, irradiance_kernel);
-		gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentCubemap", environment_cube);
-		gfxProgramSetParameter(gfx, ibl_program, "g_IrradianceMap", irradiance_map);
-		gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
-		gfxCommandDispatch(gfx, irradiance_map.getWidth() / 32, irradiance_map.getHeight() / 32, 6);
-	}
+		// IBL stuff
+		GfxProgram ibl_program = gfxCreateProgram(gfx, "shaders/ibl");
 
-	// Pre filter env map
-	{
-		GfxKernel prefilter_kernel = gfxCreateComputeKernel(gfx, ibl_program, "PreFilterEnvMap");
-		gfxCommandBindKernel(gfx, prefilter_kernel);
-		gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentCubemap", environment_cube);
-		gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
-
-		const float deltaRoughness = 1.0f / glm::max(float(prefilter_map.getMipLevels() - 1), 1.0f);
-		for (uint32_t level = 0, size = prefilter_map.getWidth(); level < prefilter_map.getMipLevels(); ++level, size /= 2)
+		// Transform equirectangular map to cubemap
 		{
-			const uint32_t numGroups = glm::max<uint32_t>(1, size / 32);
-
-			gfxProgramSetTexture(gfx, ibl_program, "g_PreFilteredMap", prefilter_map, level);
-			gfxProgramSetParameter(gfx, ibl_program, "roughness", level * deltaRoughness);
-			gfxCommandDispatch(gfx, numGroups, numGroups, 6);
+			GfxKernel equirect_to_cubemap_kernel = gfxCreateComputeKernel(gfx, ibl_program, "EquirectToCubemap");
+			gfxCommandBindKernel(gfx, equirect_to_cubemap_kernel);
+			gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentEquirectangular", environment_map);
+			gfxProgramSetParameter(gfx, ibl_program, "g_OutEnvironmentCubemap", environment_cube);
+			gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
+			gfxCommandDispatch(gfx, environment_cube.getWidth() / 32, environment_cube.getHeight() / 32, 6);
 		}
-	}
 
-	// Compute BRDF LUT map
-	{
-		GfxKernel brdf_lut_kernel = gfxCreateComputeKernel(gfx, ibl_program, "ComputeBRDFLUT");
-		gfxCommandBindKernel(gfx, brdf_lut_kernel);
-		gfxProgramSetParameter(gfx, ibl_program, "LUT", brdf_lut_map);
-		gfxCommandDispatch(gfx, brdf_lut_map.getWidth() / 32, brdf_lut_map.getHeight() / 32, 6);
-	}
+		// irradiance map
+		{
+			GfxKernel irradiance_kernel = gfxCreateComputeKernel(gfx, ibl_program, "DrawIrradianceMap");
+			gfxCommandBindKernel(gfx, irradiance_kernel);
+			gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentCubemap", environment_cube);
+			gfxProgramSetParameter(gfx, ibl_program, "g_IrradianceMap", irradiance_map);
+			gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
+			gfxCommandDispatch(gfx, irradiance_map.getWidth() / 32, irradiance_map.getHeight() / 32, 6);
+		}
+
+		// Pre filter env map
+		{
+			GfxKernel prefilter_kernel = gfxCreateComputeKernel(gfx, ibl_program, "PreFilterEnvMap");
+			gfxCommandBindKernel(gfx, prefilter_kernel);
+			gfxProgramSetParameter(gfx, ibl_program, "g_EnvironmentCubemap", environment_cube);
+			gfxProgramSetParameter(gfx, ibl_program, "LinearWrap", linear_wrap_sampler);
+
+			const float deltaRoughness = 1.0f / glm::max(float(prefilter_map.getMipLevels() - 1), 1.0f);
+			for (uint32_t level = 0, size = prefilter_map.getWidth(); level < prefilter_map.getMipLevels(); ++level, size /= 2)
+			{
+				const uint32_t numGroups = glm::max<uint32_t>(1, size / 32);
+
+				gfxProgramSetTexture(gfx, ibl_program, "g_PreFilteredMap", prefilter_map, level);
+				gfxProgramSetParameter(gfx, ibl_program, "roughness", level * deltaRoughness);
+				gfxCommandDispatch(gfx, numGroups, numGroups, 6);
+			}
+		}
+
+		// Compute BRDF LUT map
+		{
+			GfxKernel brdf_lut_kernel = gfxCreateComputeKernel(gfx, ibl_program, "ComputeBRDFLUT");
+			gfxCommandBindKernel(gfx, brdf_lut_kernel);
+			gfxProgramSetParameter(gfx, ibl_program, "LUT", brdf_lut_map);
+			gfxCommandDispatch(gfx, brdf_lut_map.getWidth() / 32, brdf_lut_map.getHeight() / 32, 6);
+		}
+
+		has_to_change_env_map = false;
+	};
 
 	GfxProgram compositeProgram = gfxCreateProgram(gfx, "shaders/scene_composite");
 	GfxKernel compositeKernel   = gfxCreateGraphicsKernel(gfx, compositeProgram);
@@ -289,6 +302,14 @@ int main()
 	// Debug views
 	std::array<const char*, 7> debug_views = { "Full", "Color", "Normal", "World Position", "Metallic", "Roughness", "Emissive"};
 	int selected_debug_view = 0;
+
+	// Environment Maps
+	int selected_env_map = 0;
+	std::vector<std::filesystem::path> env_maps;
+	const char* env_maps_path = "assets/environment";
+	for (const auto& entry : std::filesystem::directory_iterator(env_maps_path))
+		env_maps.emplace_back(entry.path());
+	load_env_map(env_maps[selected_env_map].string());
 
 	glm::vec3 light_position(-1.0f, 1.0f, 2.0f);
 	glm::vec3 light_color(1.0f);
@@ -311,6 +332,28 @@ int main()
 			ImGui::Text("Rendering");
 			if (ImGui::Button("Reload kernels"))
 				gfxKernelReloadAll(gfx);
+
+			ImGui::Separator();
+			ImGui::Text("Environment Map");
+			std::string env_combo_preview_value = env_maps[selected_env_map].stem().string();
+			if (ImGui::BeginCombo("##env_map", env_combo_preview_value.c_str()))
+			{
+				for (int i = 0; i < env_maps.size(); i++)
+				{
+					const bool is_selected = (selected_env_map == i);
+					if (ImGui::Selectable(env_maps[i].stem().string().c_str(), is_selected)) 
+					{
+						if (selected_env_map != i)
+							has_to_change_env_map = true;
+						selected_env_map = i;
+					}
+
+					// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+					if (is_selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
 
 			ImGui::Separator();
 			ImGui::Text("Debug Views");
@@ -348,6 +391,9 @@ int main()
 			//ImGui::ShowDemoWindow();
 		}
 		ImGui::End();
+
+		if (has_to_change_env_map)
+			load_env_map(env_maps[selected_env_map].string());
 
 		// Render geometry
 		gfxCommandBeginEvent(gfx, "Geometry Pass");
