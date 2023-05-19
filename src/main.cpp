@@ -94,8 +94,9 @@ int main()
 
 	//gfxSceneImport(scene, "assets/models/flying_world_battle_of_the_trash_god/FlyingWorld-BattleOfTheTrashGod.gltf");
 	//gfxSceneImport(scene, "assets/models/sphere/sphere.gltf");
-	gfxSceneImport(scene, "assets/models/cerberus/scene.gltf");
+	//gfxSceneImport(scene, "assets/models/cerberus/scene.gltf");
 	//gfxSceneImport(scene, "assets/models/DamagedHelmet/DamagedHelmet.gltf");
+	gfxSceneImport(scene, "assets/models/Sponza/Sponza.gltf");
 	gfxSceneImport(scene, "assets/models/skybox.obj");
 	const uint32_t instancesCount = gfxSceneGetInstanceCount(scene);
 	const GfxInstance* instances  = gfxSceneGetInstances(scene);
@@ -365,7 +366,7 @@ int main()
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "metallic_texture", mesh.textured_material.metallic_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "roughness_texture", mesh.textured_material.roughness_texture);
 			gfxProgramSetParameter(gfx, deferredShadingProgram, "emissive_texture", mesh.textured_material.emissive_texture);
-			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", glm::scale(mesh.transform, glm::vec3(0.3f)));
+			gfxProgramSetParameter(gfx, deferredShadingProgram, "model", glm::scale(mesh.transform, glm::vec3(1.5f)));
 			gfxCommandBindVertexBuffer(gfx, mesh.vertex_buffer);
 			gfxCommandBindIndexBuffer(gfx, mesh.index_buffer);
 			gfxCommandDrawIndexed(gfx, mesh.index_count);
