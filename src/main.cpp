@@ -77,6 +77,8 @@ GfxTexture gfxLoadTexture2D(GfxContext gfx, std::filesystem::path path)
 	return texture;
 }
 
+#define SPHERE 0
+
 int main()
 {
 	auto window = gfxCreateWindow(1280, 720, "gfx_pbr");
@@ -173,7 +175,7 @@ int main()
 			gpu_mesh.material.metallic  = 1.0f;
 		}
 
-#if 0 // for the sphere
+#if SPHERE // for the sphere
 		gpu_mesh.textured_material.albedo_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/albedo.png");
 		gpu_mesh.textured_material.metallic_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/metallic.png");
 		gpu_mesh.textured_material.roughness_texture = gfxLoadTexture2D(gfx, "assets/textures/rusted_iron/roughness.png");
@@ -285,7 +287,7 @@ int main()
 	Camera camera = CreateCamera(gfx, glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, -1.0f));
 
 	// Debug views
-	std::array<const char*, 3> debug_views = { "Full", "Color", "Normal" };
+	std::array<const char*, 7> debug_views = { "Full", "Color", "Normal", "World Position", "Metallic", "Roughness", "Emissive"};
 	int selected_debug_view = 0;
 
 	glm::vec3 light_position(-1.0f, 1.0f, 2.0f);
@@ -334,12 +336,14 @@ int main()
 			ImGui::DragFloat3("Position", glm::value_ptr(light_position));
 			ImGui::DragFloat3("Color", glm::value_ptr(light_color), 0.1f, 0.0f, 1.0f);
 
+#if SPHERE
 			// Sphere Material
 			ImGui::Separator();
 			ImGui::Text("Sphere Material");
 			ImGui::ColorEdit4("Albedo", glm::value_ptr(gpu_meshes[0].material.albedo));
 			ImGui::DragFloat("Metallic", &gpu_meshes[0].material.metallic, 0.05f, 0.0f, 1.0f);
 			ImGui::DragFloat("Roughness", &gpu_meshes[0].material.roughness, 0.05f, 0.0f, 1.0f);
+#endif
 			
 			//ImGui::ShowDemoWindow();
 		}
@@ -420,6 +424,14 @@ int main()
 			scene_texture = albedo_buffer;
 		else if (selected_debug_view == 2)
 			scene_texture = normal_buffer;
+		else if (selected_debug_view == 3)
+			scene_texture = world_pos_buffer;
+		else if (selected_debug_view == 4)
+			scene_texture = metallic_buffer;
+		else if (selected_debug_view == 5)
+			scene_texture = roughness_buffer;
+		else if (selected_debug_view == 6)
+			scene_texture = emissive_buffer;
 		else
 			scene_texture = pbr_color_buffer;
 
